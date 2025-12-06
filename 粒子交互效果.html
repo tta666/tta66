@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>粒子交互 Pro - 矢量识别与虚拟光标</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; cursor: none; font-family: "Microsoft YaHei", sans-serif; }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        
+        /* UI 层 */
+        #ui-layer {
+            position: absolute; top: 20px; left: 20px; z-index: 10;
+            color: #fff; background: rgba(0,0,0,0.6);
+            padding: 20px; border-radius: 12px; 
+            border: 1px solid rgba(255,255,255,0.15);
+            backdrop-filter: blur(10px); pointer-events: none;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            transition: opacity 0.5s;
+        }
+        .status-line { margin-bottom: 8px; font-size: 16px; }
+        .highlight { color: #00e5ff; font-weight: bold; text-shadow: 0 0 10px rgba(0,229,255,0.5); }
+        .sub-text { font-size: 12px; color: #aaa; line-height: 1.5; }
+
+        /* 摄像头反馈窗 */
+        #camera-wrapper {
+            position: absolute; bottom: 20px; right: 20px; 
+            width: 160px; height: 120px; 
+            z-index: 2; border: 2px solid #333; border-radius: 12px;
+            overflow: hidden; background: #000;
+            opacity: 0.7;
+            transform-origin: bottom right;
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        #camera-wrapper.active { border-color: #00e5ff; box-shadow: 0 0 15px rgba(0,229,255,0.3); opacity: 1; transform: scale(1.1); }
+        
+        #video-input { 
+            display: block; width: 100%; height: 100%; 
+            object-fit: cover; transform: scaleX(-1);
+            filter: grayscale(0.5) contrast(1.2); 
+        }
+        
+        #output-canvas { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            transform: scaleX(-1); 
+        }
+
+        /* 加载遮罩 */
+        #loading-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; z-index: 100;
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            color: #00e5ff;
+            transition: opacity 0.8s ease-out;
+        }
+        .loader {
+            width: 48px; height: 48px;
+            border: 3px solid #FFF; border-bottom-color: transparent;
+            border-radius: 50%; display: inline-block;
+            box-sizing: border-box; animation: rotation 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        @keyframes rotation { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .loading-text { font-size: 14px; letter-spacing: 2px; text-transform: uppercase; color: #fff; opacity: 0.8; }
+    </style>
+
+    <!-- 引入库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+</head>
+<body>
+
+    <div id="loading-screen">
+        <span class="loader"></span>
+        <div class="loading-text" id="loading-text">正在初始化视觉引擎...</div>
+    </div>
+
+    <div id="ui-layer">
+        <div class="status-line">当前状态: <span id="text-status" class="highlight">🪐 虚空 (土星)</span></div>
+        <div class="sub-text">
+            👋 <b>五指张开</b>: 粒子爆炸<br>
+            ☝️ <b>数字手势 (1/2/3)</b>: 切换形态<br>
+            ✨ <b>移动手掌</b>: 只有光标触碰粒子才会产生波纹
+        </div>
+    </div>
+
+    <div id="camera-wrapper">
+        <video id="video-input" playsinline></video>
+        <canvas id="output-canvas"></canvas>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <!-- 1. 前景粒子 Shader (文字/图形) -->
+    <script type="x-shader/x-vertex" id="vertexshader">
+        uniform float time;
+        uniform float uMorph;     
+        uniform float uTransition;
+        uniform float uScatter; 
+        
+        uniform vec3 uMousePos;
+        uniform float uMouseActive;
+        uniform vec3 uHandPos;
+        uniform float uHandActive;
+
+        uniform float uSceneRotation; 
+        uniform float uGlobalScale;  
+
+        attribute vec3 targetPosition;
+        attribute float aSize;
+        attribute float aOffset;  
+        
+        varying vec3 vColor;
+        varying float vAlpha;
+        varying float vDepth;
+
+        mat3 rotateX(float angle) {
+            float c = cos(angle);
+            float s = sin(angle);
+            return mat3(1, 0, 0, 0, c, -s, 0, s, c);
+        }
+
+        mat3 rotateY(float angle) {
+            float c = cos(angle);
+            float s = sin(angle);
+            return mat3(c, 0, s, 0, 1, 0, -s, 0, c);
+        }
+
+        mat3 rotateZ(float angle) {
+            float c = cos(angle);
+            float s = sin(angle);
+            return mat3(c, -s, 0, s, c, 0, 0, 0, 1);
+        }
+
+        // 3D 噪声函数模拟流动
+        vec3 hash33(vec3 p) { 
+            p = fract(p * vec3(.1031, .1030, .0973));
+            p += dot(p, p.yxz+33.33);
+            return fract((p.xxy + p.yxx)*p.zyx);
+        }
+
+        vec3 rippleEffect(vec3 p, vec3 center, float intensity, float radius) {
+            float dist = distance(p, center);
+            if (dist < radius) {
+                float decay = 1.0 - smoothstep(0.0, radius, dist);
+                float wave = sin(dist * 0.05 - time * 12.0);
+                vec3 dir = normalize(p - center);
+                // 大幅减小基础振幅 (由 60.0 降至 15.0)，保证文字清晰
+                return dir * wave * 15.0 * decay * intensity;
+            }
+            return vec3(0.0);
+        }
+
+        void main() {
+            float smoothProgress = smoothstep(0.0, 1.0, uMorph);
+            vec3 p = mix(position, targetPosition, smoothProgress);
+
+            // 基础呼吸律动 (仅微调，不破坏文字结构)
+            float breath = sin(time * 2.0 + aOffset * 0.1);
+            p += normalize(p) * breath * 2.0;
+
+            // 鼠标/手势交互 - 调整了参数：减小半径(radius)和强度(intensity)
+            // 鼠标：半径 300 -> 120, 强度 0.8 -> 0.5
+            if (uMouseActive > 0.5) p += rippleEffect(p, uMousePos, 0.5, 120.0);
+            
+            // 手势：半径 450 -> 180, 强度 2.5 -> 0.8
+            // 这样只会影响光标周围很小一圈，不会打乱整个文字
+            if (uHandActive > 0.5) p += rippleEffect(p, uHandPos, 0.8, 180.0);
+
+            // 爆炸散开效果
+            if (uScatter > 0.0) {
+                vec3 noise = hash33(p + time) - 0.5;
+                vec3 dir = normalize(p); 
+                float dist = uScatter * 1500.0; 
+                p += dir * dist;
+                p += noise * 300.0 * uScatter;
+            }
+
+            // 过渡效果
+            if (uTransition > 0.0) {
+                float scaleFactor = 1.0 + uTransition * 1.5; 
+                p *= scaleFactor;
+                float rotAngle = uTransition * 2.5; 
+                float r1 = sin(aOffset * 12.9898);
+                float r2 = cos(aOffset * 78.233);
+                
+                if (r1 > 0.3) p = rotateY(rotAngle * sign(r2)) * p;
+                else if (r1 < -0.3) p = rotateX(rotAngle * sign(r2)) * p;
+                else p = rotateZ(rotAngle * sign(r2)) * p;
+                
+                p = rotateY(uTransition * 0.5) * p;
+            }
+
+            // 全局旋转与缩放
+            p = rotateY(uSceneRotation) * p * uGlobalScale;
+
+            vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
+            gl_Position = projectionMatrix * mvPosition;
+
+            float depth = -mvPosition.z;
+            vDepth = depth;
+            
+            float sizeMod = 1.0;
+            if (uHandActive > 0.5 && distance(p, uHandPos) < 400.0) sizeMod = 2.0;
+            gl_PointSize = aSize * (1000.0 / depth) * (1.0 + uTransition) * sizeMod;
+
+            vec3 cSaturn = mix(vec3(0.1, 0.4, 0.8), vec3(0.8, 0.2, 0.5), sin(aOffset + time)*0.5+0.5);
+            vec3 cText = vec3(0.0, 1.0, 0.9); 
+            vec3 cGold = vec3(1.0, 0.9, 0.4); 
+
+            vec3 finalColor = mix(cSaturn, cText, smoothProgress);
+            
+            float interactHighlight = 0.0;
+            if (uHandActive > 0.5) {
+                float d = distance(p, uHandPos);
+                interactHighlight = smoothstep(400.0, 0.0, d);
+            }
+            
+            finalColor = mix(finalColor, cGold, max(interactHighlight, uScatter));
+            vColor = finalColor;
+            vAlpha = 1.0;
+        }
+    </script>
+
+    <!-- 1. 前景粒子 Fragment Shader -->
+    <script type="x-shader/x-fragment" id="fragmentshader">
+        varying vec3 vColor;
+        varying float vAlpha;
+        varying float vDepth;
+
+        void main() {
+            vec2 uv = gl_PointCoord.xy - 0.5;
+            float r = length(uv);
+            if(r > 0.5) discard;
+            float glow = 1.0 - (r * 2.0);
+            glow = pow(glow, 2.0);
+            float fog = smoothstep(2500.0, 800.0, vDepth); 
+            gl_FragColor = vec4(vColor, vAlpha * glow * fog);
+        }
+    </script>
+
+
+    <!-- 2. 背景氛围粒子 Shader (独立系统) -->
+    <script type="x-shader/x-vertex" id="bgVertexShader">
+        uniform float time;
+        uniform float uSceneRotation; // 只跟随场景转动，不跟随手势
+        attribute float aSize;
+        attribute float aOffset;
+        attribute vec3 aSpeed; // 每个粒子独立的移动速度
+        
+        varying float vAlpha;
+
+        mat3 rotateY(float angle) {
+            float c = cos(angle);
+            float s = sin(angle);
+            return mat3(c, 0, s, 0, 1, 0, -s, 0, c);
+        }
+
+        void main() {
+            vec3 p = position;
+            
+            // 独立的浮游运动 (布朗运动模拟)
+            // 不受任何手势 uniform 影响，只受时间影响
+            // 加快了时间系数 (0.2 -> 0.6)，让运动更频繁
+            float t = time * 0.6; 
+            p.x += sin(t + aOffset * 0.1) * 50.0;
+            p.y += cos(t * 0.8 + aOffset * 0.2) * 50.0;
+            p.z += sin(t * 0.5 + aOffset * 0.3) * 50.0;
+            
+            // 加快线性流动的速度
+            p += aSpeed * time * 25.0;
+            
+            // 循环空间 (Wrap around)
+            // 让跑出去的粒子从另一边回来，保持全屏有粒子
+            if(p.x > 2500.0) p.x -= 5000.0;
+            if(p.x < -2500.0) p.x += 5000.0;
+            if(p.y > 1500.0) p.y -= 3000.0;
+            if(p.y < -1500.0) p.y += 3000.0;
+            
+            // 跟随场景整体旋转 (保持背景与主体的一致性)
+            p = rotateY(uSceneRotation * 0.2) * p; // 背景转得慢一点，制造视差
+
+            vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
+            gl_Position = projectionMatrix * mvPosition;
+
+            // 深度衰减 (Depth Fade) - 远的暗，近的亮
+            float depth = -mvPosition.z;
+            
+            // 大小随深度变化，增加 3D 感
+            gl_PointSize = aSize * (800.0 / depth);
+            
+            // 闪烁效果
+            float blink = 0.5 + 0.5 * sin(time * 2.0 + aOffset);
+            vAlpha = blink * smoothstep(3000.0, 200.0, depth) * 0.6; // 最远3000处完全透明
+        }
+    </script>
+
+    <script type="x-shader/x-fragment" id="bgFragmentShader">
+        varying float vAlpha;
+        void main() {
+            vec2 uv = gl_PointCoord.xy - 0.5;
+            float r = length(uv);
+            if(r > 0.5) discard;
+            
+            // 柔和的圆形
+            float glow = 1.0 - (r * 2.0);
+            glow = pow(glow, 1.5);
+            
+            // 偏蓝青色的尘埃色
+            vec3 dustColor = vec3(0.4, 0.6, 0.8);
+            
+            gl_FragColor = vec4(dustColor, vAlpha * glow);
+        }
+    </script>
+
+    <script>
+        // --- 1. 配置与初始化 ---
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        
+        const CONFIG = {
+            particleCount: isMobile ? 25000 : 60000,
+            // 增加了背景粒子数量，让画面更丰富
+            bgParticleCount: isMobile ? 5000 : 12000, 
+            textScale: isMobile ? 1.2 : 1.8,
+            bufferSize: 5,
+            canvasWidth: 2048,      
+            canvasHeight: 1024
+        };
+
+        const textStatusEl = document.getElementById('text-status');
+        const loadingScreen = document.getElementById('loading-screen');
+        const loadingText = document.getElementById('loading-text');
+
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050505, 0.0004);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 8000);
+        camera.position.z = 1200;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: !isMobile, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        // --- 2. 虚拟光标 ---
+        function createCursor() {
+            const geometry = new THREE.SphereGeometry(15, 16, 16);
+            const material = new THREE.MeshBasicMaterial({ 
+                color: 0x00ffff, transparent: true, opacity: 0.6, depthTest: false
+            });
+            const cursor = new THREE.Mesh(geometry, material);
+            const glowGeo = new THREE.RingGeometry(20, 25, 32);
+            const glowMat = new THREE.MeshBasicMaterial({ 
+                color: 0x00aaff, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthTest: false
+            });
+            const glow = new THREE.Mesh(glowGeo, glowMat);
+            cursor.add(glow);
+            cursor.visible = false;
+            scene.add(cursor);
+            return { mesh: cursor, glow: glow };
+        }
+        const handCursor = createCursor();
+
+        // --- 3A. 前景粒子系统 (文字/交互) ---
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(CONFIG.particleCount * 3);
+        const targets = new Float32Array(CONFIG.particleCount * 3);
+        const sizes = new Float32Array(CONFIG.particleCount);
+        const offsets = new Float32Array(CONFIG.particleCount);
+
+        // 生成土星
+        function generateSaturn() {
+            const points = [];
+            const sphereCount = Math.floor(CONFIG.particleCount * 0.5);
+            for(let i=0; i<sphereCount; i++) {
+                const r = 300 * Math.cbrt(Math.random());
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                points.push({
+                    x: r * Math.sin(phi) * Math.cos(theta),
+                    y: r * Math.sin(phi) * Math.sin(theta),
+                    z: r * Math.cos(phi)
+                });
+            }
+            const ringCount = CONFIG.particleCount - sphereCount;
+            for(let i=0; i<ringCount; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 450 + Math.random() * 400 + Math.random() * 100; 
+                let px = Math.cos(angle) * dist;
+                let py = (Math.random()-0.5) * 15.0; 
+                let pz = Math.sin(angle) * dist;
+                const tilt = 20 * Math.PI / 180;
+                let y_new = py * Math.cos(tilt) - pz * Math.sin(tilt);
+                let z_new = py * Math.sin(tilt) + pz * Math.cos(tilt);
+                points.push({ x: px, y: y_new, z: z_new });
+            }
+            return points;
+        }
+
+        const saturnPoints = generateSaturn();
+        for (let i = 0; i < CONFIG.particleCount; i++) {
+            const p = saturnPoints[i];
+            positions[i*3] = p.x; positions[i*3+1] = p.y; positions[i*3+2] = p.z;
+            targets[i*3] = p.x; targets[i*3+1] = p.y; targets[i*3+2] = p.z;
+            sizes[i] = Math.random() * 2.0 + 0.5;
+            offsets[i] = Math.random() * 100;
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('targetPosition', new THREE.BufferAttribute(targets, 3));
+        geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+        geometry.setAttribute('aOffset', new THREE.BufferAttribute(offsets, 1));
+
+        const material = new THREE.ShaderMaterial({
+            uniforms: {
+                time: { value: 0 },
+                uMorph: { value: 0 },
+                uTransition: { value: 0 },
+                uScatter: { value: 0 },
+                uMousePos: { value: new THREE.Vector3(0, 0, 0) },
+                uMouseActive: { value: 0 },
+                uHandPos: { value: new THREE.Vector3(0, 0, 0) },
+                uHandActive: { value: 0 },
+                uSceneRotation: { value: 0 },
+                uGlobalScale: { value: 1.0 }
+            },
+            vertexShader: document.getElementById('vertexshader').textContent,
+            fragmentShader: document.getElementById('fragmentshader').textContent,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            transparent: true
+        });
+
+        const pointsMesh = new THREE.Points(geometry, material);
+        scene.add(pointsMesh);
+
+        // --- 3B. 背景粒子系统 (氛围/浮游) ---
+        // 独立的系统，不受前景 Shader 逻辑影响
+        const bgGeometry = new THREE.BufferGeometry();
+        const bgPositions = new Float32Array(CONFIG.bgParticleCount * 3);
+        const bgSizes = new Float32Array(CONFIG.bgParticleCount);
+        const bgOffsets = new Float32Array(CONFIG.bgParticleCount);
+        const bgSpeeds = new Float32Array(CONFIG.bgParticleCount * 3);
+
+        for(let i=0; i<CONFIG.bgParticleCount; i++) {
+            // 广阔的分布范围，制造景深
+            bgPositions[i*3] = (Math.random() - 0.5) * 5000; // X
+            bgPositions[i*3+1] = (Math.random() - 0.5) * 3000; // Y
+            bgPositions[i*3+2] = (Math.random() - 0.5) * 4000 - 500; // Z (偏后方)
+            
+            bgSizes[i] = Math.random() * 4.0 + 1.0;
+            bgOffsets[i] = Math.random() * 100;
+            
+            // 随机微小速度
+            bgSpeeds[i*3] = (Math.random() - 0.5) * 2.0; 
+            bgSpeeds[i*3+1] = (Math.random() - 0.5) * 2.0;
+            bgSpeeds[i*3+2] = (Math.random() - 0.5) * 2.0;
+        }
+
+        bgGeometry.setAttribute('position', new THREE.BufferAttribute(bgPositions, 3));
+        bgGeometry.setAttribute('aSize', new THREE.BufferAttribute(bgSizes, 1));
+        bgGeometry.setAttribute('aOffset', new THREE.BufferAttribute(bgOffsets, 1));
+        bgGeometry.setAttribute('aSpeed', new THREE.BufferAttribute(bgSpeeds, 3));
+
+        const bgMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                time: { value: 0 },
+                uSceneRotation: { value: 0 }
+            },
+            vertexShader: document.getElementById('bgVertexShader').textContent,
+            fragmentShader: document.getElementById('bgFragmentShader').textContent,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+            transparent: true
+        });
+
+        const bgMesh = new THREE.Points(bgGeometry, bgMaterial);
+        scene.add(bgMesh);
+
+
+        // --- 4. 文本生成逻辑 ---
+        function createTextPoints(text, fontSize = 200) {
+            const cvs = document.createElement('canvas');
+            cvs.width = CONFIG.canvasWidth; cvs.height = CONFIG.canvasHeight;
+            const ctx = cvs.getContext('2d');
+            ctx.fillStyle = '#000'; ctx.fillRect(0,0,CONFIG.canvasWidth, CONFIG.canvasHeight);
+            ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.font = `900 ${fontSize}px "Microsoft YaHei", "Heiti SC", sans-serif`;
+            ctx.fillText(text, CONFIG.canvasWidth/2, CONFIG.canvasHeight/2);
+            
+            const data = ctx.getImageData(0,0,CONFIG.canvasWidth, CONFIG.canvasHeight).data;
+            let validPixels = [];
+            const scanStep = isMobile ? 4 : 3; 
+            
+            for(let y=0; y<CONFIG.canvasHeight; y+=scanStep) {
+                for(let x=0; x<CONFIG.canvasWidth; x+=scanStep) {
+                    if(data[(y*CONFIG.canvasWidth+x)*4] > 60) {
+                        const jitterX = (Math.random() - 0.5) * 3.0;
+                        const jitterY = (Math.random() - 0.5) * 3.0;
+                        validPixels.push({
+                            x: ((x - CONFIG.canvasWidth/2) + jitterX) * CONFIG.textScale, 
+                            y: (-(y - CONFIG.canvasHeight/2) + jitterY) * CONFIG.textScale,
+                            z: (Math.random() - 0.5) * 50.0 
+                        });
+                    }
+                }
+            }
+            const finalPoints = new Array(CONFIG.particleCount);
+            if (validPixels.length > 0) {
+                for (let i = validPixels.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [validPixels[i], validPixels[j]] = [validPixels[j], validPixels[i]];
+                }
+                for(let i=0; i<CONFIG.particleCount; i++) {
+                    const p = validPixels[i % validPixels.length];
+                    finalPoints[i] = { 
+                        x: p.x + (Math.random()-0.5)*2, 
+                        y: p.y + (Math.random()-0.5)*2, 
+                        z: p.z 
+                    };
+                }
+            } else {
+                for(let i=0; i<CONFIG.particleCount; i++) finalPoints[i] = {x:0,y:0,z:0};
+            }
+            return finalPoints;
+        }
+
+        const presets = {
+            0: saturnPoints,
+            1: createTextPoints("Hello", 350),
+            2: createTextPoints("我是呱", 300),
+            3: createTextPoints("我爱你们", 250)
+        };
+
+        let currentTargetIndex = 0;
+        let isTransitioning = false;
+
+        function triggerTransition(index) {
+            if (currentTargetIndex === index || isTransitioning) return;
+            isTransitioning = true;
+            currentTargetIndex = index;
+            
+            // 优化：加快节奏，使用 Quart 曲线让启动更干脆
+            new TWEEN.Tween(material.uniforms.uTransition)
+                .to({ value: 1.0 }, 500) // 1200 -> 500ms
+                .easing(TWEEN.Easing.Quartic.Out)
+                .onComplete(() => {
+                    updateParticleTargets(index);
+                    // 快速归位，带一点回弹感会更灵动
+                    new TWEEN.Tween(material.uniforms.uTransition)
+                        .to({ value: 0.0 }, 700) // 1500 -> 700ms
+                        .easing(TWEEN.Easing.Cubic.Out)
+                        .onComplete(() => { isTransitioning = false; })
+                        .start();
+                }).start();
+
+            // 形态混合加快
+            const targetMorph = index === 0 ? 0.0 : 1.0;
+            new TWEEN.Tween(material.uniforms.uMorph)
+                .to({ value: targetMorph }, 1000) // 2500 -> 1000ms
+                .easing(TWEEN.Easing.Cubic.InOut)
+                .start();
+        }
+
+        function updateParticleTargets(index) {
+            const arr = geometry.attributes.targetPosition.array;
+            const points = presets[index];
+            if (!points) return;
+            for(let i=0; i<CONFIG.particleCount; i++) {
+                arr[i*3] = points[i].x; arr[i*3+1] = points[i].y; arr[i*3+2] = points[i].z;
+            }
+            geometry.attributes.targetPosition.needsUpdate = true;
+        }
+
+        // --- 5. 鼠标备用交互 ---
+        const mousePlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        window.addEventListener('mousemove', (event) => {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const target = new THREE.Vector3();
+            raycaster.ray.intersectPlane(mousePlane, target);
+            if (target) {
+                material.uniforms.uMousePos.value.copy(target);
+                material.uniforms.uMouseActive.value = 1.0;
+            }
+        });
+        document.body.addEventListener('mouseleave', () => { material.uniforms.uMouseActive.value = 0.0; });
+
+        // --- 6. 视觉算法：向量角度法 ---
+        class VectorUtils {
+            static getVector(p1, p2) {
+                return { x: p2.x - p1.x, y: p2.y - p1.y, z: p2.z - p1.z };
+            }
+            static dot(v1, v2) {
+                return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+            }
+            static mag(v) {
+                return Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+            }
+            static getAngle(v1, v2) {
+                const m = this.mag(v1) * this.mag(v2);
+                if (m === 0) return 0;
+                const cosTheta = this.dot(v1, v2) / m;
+                return Math.acos(Math.max(-1, Math.min(1, cosTheta))) * (180 / Math.PI);
+            }
+        }
+
+        class Stabilizer {
+            constructor(limit) { this.limit = limit; this.history = []; }
+            add(val) {
+                this.history.push(val);
+                if(this.history.length > this.limit) this.history.shift();
+            }
+            getStable() {
+                if(this.history.length < 2) return "NONE";
+                const counts = {};
+                this.history.forEach(v => counts[v] = (counts[v]||0)+1);
+                const threshold = this.history.length * 0.6;
+                const top = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b);
+                if(counts[top] > threshold) return top;
+                return "NONE"; 
+            }
+        }
+        
+        const gestureStab = new Stabilizer(CONFIG.bufferSize);
+        const videoEl = document.getElementById('video-input');
+        const canvasEl = document.getElementById('output-canvas');
+        const ctx = canvasEl.getContext('2d');
+        const cameraWrapper = document.getElementById('camera-wrapper');
+
+        const vFOV = THREE.MathUtils.degToRad(camera.fov);
+        const visibleHeight = 2 * Math.tan(vFOV / 2) * camera.position.z;
+        const visibleWidth = visibleHeight * camera.aspect;
+
+        let currentRotation = 0;
+        let targetRotationSpeed = 0;
+        let currentRotationSpeed = 0;
+        let isHandControlling = false;
+
+        function onResults(results) {
+            if(loadingScreen.style.display !== 'none') {
+                loadingText.innerText = "视觉系统就绪";
+                setTimeout(() => {
+                    loadingScreen.style.opacity = 0;
+                    setTimeout(() => loadingScreen.style.display = 'none', 800);
+                }, 500);
+            }
+
+            ctx.clearRect(0,0,canvasEl.width, canvasEl.height);
+            ctx.drawImage(results.image, 0,0, canvasEl.width, canvasEl.height);
+            
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                cameraWrapper.classList.add('active');
+                const lm = results.multiHandLandmarks[0];
+                
+                drawConnectors(ctx, lm, HAND_CONNECTIONS, {color: '#00e5ff', lineWidth: 2});
+                drawLandmarks(ctx, lm, {color: '#ffffff', lineWidth: 1, radius: 2});
+
+                const palm = lm[9]; 
+                const handX = (0.5 - palm.x) * visibleWidth; 
+                const handY = (0.5 - palm.y) * visibleHeight;
+                
+                const lerpFactor = 0.2;
+                handCursor.mesh.position.x += (handX - handCursor.mesh.position.x) * lerpFactor;
+                handCursor.mesh.position.y += (handY - handCursor.mesh.position.y) * lerpFactor;
+                handCursor.mesh.visible = true;
+                
+                material.uniforms.uHandPos.value.copy(handCursor.mesh.position);
+                material.uniforms.uHandActive.value = 1.0;
+                
+                isHandControlling = true;
+                const offsetX = handCursor.mesh.position.x / (visibleWidth / 2); 
+                targetRotationSpeed = offsetX * 0.15; 
+
+                const wrist = lm[0];
+                const isFingerStraight = (mcpIdx, pipIdx, tipIdx) => {
+                    const v1 = VectorUtils.getVector(lm[mcpIdx], lm[pipIdx]);
+                    const v2 = VectorUtils.getVector(lm[pipIdx], lm[tipIdx]);
+                    const angle = VectorUtils.getAngle(v1, v2);
+                    return angle < 30; 
+                };
+                
+                const isThumbOpen = () => {
+                   const angle = VectorUtils.getAngle(
+                       VectorUtils.getVector(lm[0], lm[2]), 
+                       VectorUtils.getVector(lm[2], lm[4])
+                   );
+                   return angle < 40;
+                };
+
+                const fIndex = isFingerStraight(5, 6, 8);
+                const fMiddle = isFingerStraight(9, 10, 12);
+                const fRing = isFingerStraight(13, 14, 16);
+                const fPinky = isFingerStraight(17, 18, 20);
+                const fThumb = isThumbOpen();
+
+                let spread = 0;
+                spread += VectorUtils.mag(VectorUtils.getVector(lm[4], lm[8]));
+                spread += VectorUtils.mag(VectorUtils.getVector(lm[8], lm[12]));
+                spread += VectorUtils.mag(VectorUtils.getVector(lm[12], lm[16]));
+                spread += VectorUtils.mag(VectorUtils.getVector(lm[16], lm[20]));
+                const isWideSpread = spread > 0.6; 
+
+                let currentGesture = "UNKNOWN";
+
+                if (fThumb && fIndex && fMiddle && fRing && fPinky && isWideSpread) {
+                    currentGesture = "EXPLODE";
+                } else if (fIndex && !fMiddle && !fRing && !fPinky) {
+                    currentGesture = "ONE";
+                } else if (fIndex && fMiddle && !fRing && !fPinky) {
+                    currentGesture = "TWO";
+                } else if (fIndex && fMiddle && fRing && !fPinky) {
+                    currentGesture = "THREE";
+                } else if (!fIndex && !fMiddle && !fRing && !fPinky) {
+                    currentGesture = "FIST";
+                } else {
+                    currentGesture = "IDLE";
+                }
+
+                gestureStab.add(currentGesture);
+                const stableGesture = gestureStab.getStable();
+
+                if (stableGesture === "EXPLODE") {
+                    new TWEEN.Tween(material.uniforms.uScatter)
+                        .to({value: 1.0}, 150) // 200 -> 150ms 爆发更快
+                        .easing(TWEEN.Easing.Cubic.Out)
+                        .start();
+                    textStatusEl.innerText = "💥 粒子爆发";
+                    handCursor.glow.scale.set(1.5, 1.5, 1.5);
+                } else {
+                    new TWEEN.Tween(material.uniforms.uScatter)
+                        .to({value: 0.0}, 400) // 600 -> 400ms 聚集更快
+                        .easing(TWEEN.Easing.Quartic.Out)
+                        .start();
+                    handCursor.glow.scale.set(1.0, 1.0, 1.0);
+
+                    if (stableGesture === "ONE") {
+                        triggerTransition(1); 
+                        textStatusEl.innerText = "👋 Hello";
+                    } else if (stableGesture === "TWO") {
+                        triggerTransition(2); 
+                        textStatusEl.innerText = "🐸 我是呱";
+                    } else if (stableGesture === "THREE") {
+                        triggerTransition(3); 
+                        textStatusEl.innerText = "❤️ 我爱你们";
+                    } else if (stableGesture === "FIST") {
+                         textStatusEl.innerText = "✊ 聚集";
+                    } else {
+                        textStatusEl.innerText = "🪐 虚空 (土星)";
+                    }
+                }
+
+            } else {
+                cameraWrapper.classList.remove('active');
+                material.uniforms.uHandActive.value = 0.0;
+                handCursor.mesh.visible = false;
+                new TWEEN.Tween(material.uniforms.uScatter).to({value: 0}, 1000).start();
+                isHandControlling = false;
+                targetRotationSpeed = 0;
+            }
+        }
+
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({
+            maxNumHands: 1, 
+            modelComplexity: isMobile ? 0 : 1, 
+            minDetectionConfidence: 0.5, 
+            minTrackingConfidence: 0.5
+        });
+        hands.onResults(onResults);
+
+        const cameraUtils = new Camera(videoEl, {
+            onFrame: async () => { await hands.send({image: videoEl}); },
+            width: 320, height: 240
+        });
+        
+        loadingText.innerText = "正在加载 AI 模型...";
+        cameraUtils.start().catch(e => {
+            loadingText.innerText = "无法访问摄像头，请检查权限";
+            loadingText.style.color = "red";
+        });
+
+        function animate(time) {
+            requestAnimationFrame(animate);
+            TWEEN.update(time);
+            
+            // 更新 uniform 时间
+            material.uniforms.time.value += 0.01;
+            bgMaterial.uniforms.time.value += 0.01; // 更新背景粒子时间
+
+            if (isHandControlling && Math.abs(targetRotationSpeed) > 0.001) {
+                // 手势控制时：跟随手势旋转，加快响应 (0.1 -> 0.2)
+                currentRotationSpeed += (targetRotationSpeed - currentRotationSpeed) * 0.2;
+                currentRotation += currentRotationSpeed;
+            } else {
+                // 手势释放后：阻尼减速 (0.95 -> 0.92)
+                currentRotationSpeed *= 0.92; 
+                currentRotation += currentRotationSpeed;
+
+                if (currentTargetIndex === 0) {
+                    if (Math.abs(currentRotationSpeed) < 0.001) {
+                        currentRotation += 0.001;
+                    }
+                } 
+                else {
+                    // 放宽回正触发条件 (0.02 -> 0.05)
+                    if (Math.abs(currentRotationSpeed) < 0.05) {
+                        const cycle = Math.PI * 2;
+                        let targetRot = Math.round(currentRotation / cycle) * cycle;
+                        let diff = targetRot - currentRotation;
+                        
+                        // 加快回正速度 (0.05 -> 0.12)
+                        currentRotation += diff * 0.12;
+                        
+                        if(!isTransitioning) { 
+                             // 增加一点回正时的粒子扰动，让它看起来像是在“抖动归位”
+                             const alignStress = Math.min(Math.abs(diff) * 0.8, 0.4); 
+                             material.uniforms.uTransition.value += (alignStress - material.uniforms.uTransition.value) * 0.2;
+                        }
+                    }
+                }
+            }
+            
+            material.uniforms.uSceneRotation.value = currentRotation;
+            bgMaterial.uniforms.uSceneRotation.value = currentRotation; // 背景也跟随缓慢旋转，保持空间一致性
+
+            if(handCursor.mesh.visible) {
+                handCursor.glow.rotation.z -= 0.05;
+                const scale = 1.0 + Math.sin(time * 0.005) * 0.2;
+                if(material.uniforms.uScatter.value < 0.1) {
+                    handCursor.glow.scale.set(scale, scale, scale);
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth/window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+    
+    <!-- 回到首页按钮 -->
+    <div style="position: fixed; top: 20px; left: 20px; z-index: 1000;">
+        <a href="index.html" style="display: inline-block; padding: 10px 20px; background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 25px; color: white; text-decoration: none; font-size: 14px; font-weight: 500; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);">
+            ← 回到首页
+        </a>
+    </div>
+</body>
+</html>

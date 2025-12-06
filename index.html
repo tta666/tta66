@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>个人网站 - 呱</title>
+    <!-- 使用 Tailwind CSS 进行快速布局 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="theme.css">
+    <link rel="stylesheet" href="transitions.css">
+    <link rel="stylesheet" href="styles.css">
+    
+    <style>
+        /* 补充一些内联样式以确保兼容性 */
+        .text-shadow {
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        /* 旋转动画定义 */
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        @keyframes counter-rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(-360deg); }
+        }
+        .animate-rotate {
+            animation: rotate 20s linear infinite;
+        }
+        .animate-counter-rotate {
+            animation: counter-rotate 20s linear infinite;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-purple-50 min-h-screen flex flex-col font-sans">
+    
+    <div id="page-container" class="fade-enter min-h-screen flex flex-col relative">
+        <!-- 星轨图片背景 -->
+        <div class="fixed inset-0 z-[-1] overflow-hidden">
+            <img 
+                src="https://qcloud.dpfile.com/pc/sCaRH6uvGxsLpidobhtiE0DFvriVRP4joX-jyxuW2mQdWFMDZue1tv2d7Lpf3MXh.jpg" 
+                alt="星轨背景" 
+                class="absolute w-full h-full object-cover"
+            >
+            <!-- 半透明遮罩，增强文字可读性 -->
+            <div class="absolute inset-0 bg-black/40"></div>
+        </div>
+
+        <!-- 导航栏 -->
+        <nav class="nav-glass fixed top-0 left-0 right-0 z-50 transition-all duration-300 backdrop-blur-md bg-white/10 border-b border-white/20">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between h-16">
+                    <div class="flex items-center">
+                        <span class="text-xl font-bold text-white drop-shadow-md">呱</span>
+                    </div>
+                    <div class="flex items-center space-x-6">
+                        <a href="index.html" class="text-white hover:text-purple-300 transition-colors duration-200 text-shadow font-medium">首页</a>
+                        <a href="comfort1.html" class="text-white hover:text-purple-300 transition-colors duration-200 text-shadow font-medium">天天开心</a>
+                        <a href="playlist1.html" class="bg-white/20 border border-white/30 text-white px-4 py-1.5 rounded-full hover:bg-purple-600 hover:border-transparent transition-all duration-300 text-shadow text-sm backdrop-blur-sm">my歌单</a>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- 主内容区域：垂直居中布局 -->
+        <!-- mt-20 为导航栏留出空间 -->
+        <main class="flex-grow flex flex-col items-center w-full max-w-4xl mx-auto pt-24 px-4 pb-12 space-y-8">
+            
+            <!-- 1. 头像区域 (圆形，居中) -->
+            <div class="flex flex-col items-center z-10">
+                 <div class="w-40 h-40 sm:w-48 sm:h-48 rounded-full overflow-hidden shadow-2xl border-4 border-white/80 fade-in-element delay-100 transform transition-transform duration-500 hover:scale-105 hover:rotate-3 cursor-pointer">
+                    <img 
+                        src="https://i0.hdslb.com/bfs/new_dyn/138dda976d2f2d9ef013c591908b5e4229140710.png@1192w.webp" 
+                        alt="头像" 
+                        class="w-full h-full object-cover"
+                    >
+                 </div>
+                 <h1 class="text-5xl font-bold text-white mt-6 drop-shadow-[0_4px_4px_rgba(0,0,0,0.5)] fade-in-element delay-200 tracking-wider">呱</h1>
+            </div>
+
+            <!-- 2. 来到世界信息栏 -->
+            <div class="fade-in-element delay-300 z-10">
+                <div class="glass-morphism px-8 py-3 rounded-full border border-white/20 bg-white/10 backdrop-blur-md shadow-lg hover:bg-white/20 transition-all">
+                     <p id="timeInfo" class="text-white text-lg font-medium drop-shadow-md">正在加载时间...</p>
+                </div>
+            </div>
+
+            <!-- 3. 个人简介 & 歌单跳转 -->
+            <div class="glass-morphism p-8 w-full max-w-lg text-center fade-in-element delay-400 rounded-2xl border border-white/10 bg-black/20 backdrop-blur-md shadow-xl hover:bg-black/30 transition-all duration-300">
+                <h2 class="text-2xl font-semibold text-white mb-4 text-shadow flex items-center justify-center gap-2">
+                    <span>👋</span> 个人简介
+                </h2>
+                <p class="text-gray-100 leading-relaxed mb-8 text-shadow text-lg">
+                    大家好，我是呱。这是我的个人网站，<br>在这里你可以了解我的基本信息。
+                </p>
+                <a href="playlist1.html" class="inline-flex items-center justify-center bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-8 py-3 rounded-full font-semibold hover:from-purple-500 hover:to-indigo-500 transition-all duration-300 transform hover:scale-105 shadow-lg group">
+                    <span>查看我的歌单</span>
+                    <svg class="w-4 h-4 ml-2 transform group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                </a>
+            </div>
+
+            <!-- 4. 旋转菜单 (现在位于文档流中，不会遮挡，且在关于我上方) -->
+            <!-- 增加 py-8 增加上下间距 -->
+            <div class="py-8 fade-in-element delay-500 flex justify-center w-full z-10">
+                <div class="relative w-72 h-72">
+                    <!-- 装饰性轨道 -->
+                    <div class="absolute inset-0 rounded-full border border-dashed border-white/30 opacity-50 scale-90"></div>
+                    <div class="absolute inset-0 rounded-full border-2 border-white/10 opacity-30"></div>
+                    
+                    <!-- 旋转容器 -->
+                    <div class="absolute inset-0 animate-rotate">
+                        <!-- 顶部按钮：拍立得 -->
+                        <div class="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 hover:scale-110 transition-transform cursor-pointer z-20">
+                            <a href="拍立得.html" class="glass-morphism px-5 py-2 rounded-full text-white text-sm font-bold border border-white/30 hover:bg-white/20 transition-all flex items-center gap-2 animate-counter-rotate whitespace-nowrap shadow-[0_0_15px_rgba(255,255,255,0.3)]">
+                                📸 我的拍立得
+                            </a>
+                        </div>
+                        
+                        <!-- 底部按钮：粒子交互 -->
+                        <div class="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-1/2 hover:scale-110 transition-transform cursor-pointer z-20">
+                            <a href="粒子交互效果.html" class="glass-morphism px-5 py-2 rounded-full text-white text-sm font-bold border border-white/30 hover:bg-white/20 transition-all flex items-center gap-2 animate-counter-rotate whitespace-nowrap shadow-[0_0_15px_rgba(0,229,255,0.3)]">
+                                ✨ 粒子交互效果
+                            </a>
+                        </div>
+
+                        <!-- 装饰星球 -->
+                        <div class="absolute top-1/2 right-0 transform translate-x-1/2 -translate-y-1/2 w-3 h-3 bg-blue-300 rounded-full shadow-[0_0_10px_#60a5fa]"></div>
+                        <div class="absolute top-1/2 left-0 transform -translate-x-1/2 -translate-y-1/2 w-2 h-2 bg-purple-300 rounded-full shadow-[0_0_8px_#c084fc]"></div>
+                    </div>
+
+                    <!-- 中心装饰文案，让圆圈不那么空 -->
+                    <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <span class="text-white/30 text-xs tracking-[0.2em] font-light">EXPLORE</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5. 关于我 / 人生感悟 (位于最下方) -->
+            <section class="glass-morphism rounded-2xl p-10 w-full max-w-3xl text-center fade-in-element delay-500 border border-white/10 bg-black/20 backdrop-blur-md shadow-2xl">
+                <h2 class="text-3xl font-bold text-white mb-8 text-shadow tracking-wide border-b border-white/10 pb-4 inline-block px-10">关于我</h2>
+                <div class="max-w-2xl mx-auto space-y-6">
+                    <div>
+                        <h3 class="text-xl font-medium text-purple-200 mb-3 text-shadow">人生感悟</h3>
+                        <p class="text-white leading-relaxed text-2xl font-light italic text-shadow font-serif">
+                            “我从不害怕电影会散场，<br>因为陪我看完这场电影的人是你。”
+                        </p>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+
+        <!-- 6. 页脚 (包含版权和访问统计) -->
+        <footer class="nav-glass py-8 text-white text-center w-full z-10 border-t border-white/10 bg-black/30 backdrop-blur-lg mt-auto">
+             <div class="max-w-7xl mx-auto px-4 space-y-3">
+                <p class="text-gray-300 text-shadow text-sm">© 2025 呱的网站 | Is me</p>
+                
+                <div class="inline-flex items-center gap-2 glass-morphism px-5 py-1.5 rounded-full bg-white/5 border border-white/10">
+                    <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                    <span class="text-gray-300 text-xs">总访问人数：</span>
+                    <span id="visitCount" class="text-white font-mono font-bold">0</span>
+                </div>
+             </div>
+        </footer>
+    </div>
+    
+    <!-- 引入原有的 script.js 以保持功能 -->
+    <script src="script.js"></script>
+    
+    <!-- 简单的脚本来填充日期，防止 script.js 未加载时留空 -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // 如果 script.js 还没运行，这里做一个简单的兜底
+            const timeInfo = document.getElementById('timeInfo');
+            if(timeInfo && timeInfo.innerText === '正在加载时间...') {
+                // 假设 script.js 会覆盖它，这里只做备用
+                // 你可以根据实际情况调整这里的逻辑
+            }
+        });
+    </script>
+</body>
+</html>
