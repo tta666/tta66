@@ -1,0 +1,70 @@
+/* theme.css - 最终完整版 */
+
+/* 1. 全局深色底色 (防止白屏) */
+body {
+    background-color: #0f172a; /* Slate-900 */
+    color: white;
+    overflow-x: hidden; /* 防止横向滚动 */
+}
+
+/* 2. 高级毛玻璃 (Glassmorphism Pro) */
+.glass-morphism {
+    background: rgba(30, 41, 59, 0.4) !important; /* 增加一点深蓝倾向 */
+    backdrop-filter: blur(12px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(12px) saturate(180%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.2) !important;
+    border-radius: 20px !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3) !important;
+    position: relative;
+    z-index: 10;
+    will-change: backdrop-filter;
+    transform: translateZ(0);
+}
+
+/* 3. 导航栏玻璃 */
+.nav-glass {
+    background: rgba(15, 23, 42, 0.6) !important; /* 更深的底色 */
+    backdrop-filter: blur(12px) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+    will-change: backdrop-filter;
+    transform: translateZ(0);
+}
+
+/* 4. 全屏播放器专用动画 (解决突兀感) */
+/* 默认状态：完全隐藏在下方，且稍微缩小 */
+#fullPlayer {
+    transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1),
+                opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1),
+                backdrop-filter 0.6s ease;
+    will-change: transform, opacity;
+}
+
+/* 隐藏状态 */
+.player-hidden {
+    transform: translateY(100%) scale(0.95);
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* 显示状态 */
+.player-visible {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* 5. 唱片动画 */
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.animate-spin-slow { animation: spin 20s linear infinite; }
+.paused { animation-play-state: paused !important; }
+
+/* 6. 动态背景层 */
+.dynamic-bg {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    transition: opacity 1s ease;
+    filter: blur(80px) saturate(150%) brightness(0.6);
+    transform: scale(1.2); /* 放大以消除边缘模糊白边 */
+}
